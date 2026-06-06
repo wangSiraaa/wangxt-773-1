@@ -42,11 +42,13 @@ export const houseAPI = {
   getEvaluations: (houseId) => api.get(`/houses/${houseId}/evaluations`),
   createEvaluation: (houseId, data) => api.post(`/houses/${houseId}/evaluations`, data),
   updateEvaluationStatus: (evalId, status) => api.patch(`/houses/evaluations/${evalId}/status`, { status }),
+  confirmEvaluation: (evalId) => api.post(`/houses/evaluations/${evalId}/confirm`),
   
   getSchemes: (houseId) => api.get(`/houses/${houseId}/schemes`),
   createScheme: (houseId, data) => api.post(`/houses/${houseId}/schemes`, data),
   updateScheme: (schemeId, data) => api.put(`/houses/schemes/${schemeId}`, data),
   updateSchemeStatus: (schemeId, status) => api.patch(`/houses/schemes/${schemeId}/status`, { status }),
+  confirmScheme: (schemeId) => api.post(`/houses/schemes/${schemeId}/confirm`),
   
   getObjections: (houseId) => api.get(`/houses/${houseId}/objections`),
   createObjection: (houseId, data) => api.post(`/houses/${houseId}/objections`, data),
@@ -55,13 +57,16 @@ export const houseAPI = {
   getContracts: (houseId) => api.get(`/houses/${houseId}/contracts`),
   createContract: (houseId, data) => api.post(`/houses/${houseId}/contracts`, data),
   updateContractStatus: (contractId, status) => api.patch(`/houses/contracts/${contractId}/status`, { status }),
+  signContract: (contractId) => api.post(`/houses/contracts/${contractId}/sign`),
+  freezeContract: (contractId) => api.post(`/houses/contracts/${contractId}/freeze`),
   
   getAuditLogs: (houseId) => api.get(`/houses/${houseId}/audit-logs`)
 };
 
 export const dashboardAPI = {
   getStats: () => api.get('/dashboard/stats'),
-  getRecentActivity: () => api.get('/dashboard/recent-activity')
+  getRecentActivity: () => api.get('/dashboard/recent-activity'),
+  getDashboard: () => api.get('/dashboard')
 };
 
 export default api;
