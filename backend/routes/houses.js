@@ -791,4 +791,289 @@ router.patch('/contracts/:id/status', authenticate, (req, res) => {
   res.json(updated);
 });
 
+router.get('/archives/list', authenticate, (req, res) => {
+  const user = req.user;
+  const { status, evaluation_consistent, house_code, owner_name } = req.query;
+
+  let sql = `
+    SELECT a.*, h.house_code, h.owner_name, h.address, h.area,
+           c.contract_no, c.status as contract_status,
+           e.total_price as eval_total_price, e.version as eval_version,
+           s.total_amount as scheme_total, s.compensation_type,
+           u.name as creator_name
+    FROM archives a
+    LEFT JOIN houses h ON a.house_id = h.id
+    LEFT JOIN contracts c ON a.contract_id = c.id
+    LEFT JOIN evaluations e ON a.evaluation_id = e.id
+    LEFT JOIN schemes s ON a.scheme_id = s.id
+    LEFT JOIN users u ON a.created_by = u.id
+    WHERE 1=1
+  `;
+  const params = [];
+
+  if (status) {
+    sql += ' AND a.status = ?';
+    params.push(status);
+  }
+  if (evaluation_consistent !== undefined) {
+    sql += ' AND a.evaluation_consistent = ?';
+    params.push(evaluation_consistent ? 1 : 0);
+  }
+  if (house_code) {
+    sql += ' AND h.house_code LIKE ?';
+    params.push('%' + house_code + '%');
+  }
+  if (owner_name) {
+    sql += ' AND h.owner_name LIKE ?';
+    params.push('%' + owner_name + '%');
+  }
+
+  if (user.role === 'resident') {
+    sql += ' AND h.created_by = ?';
+    params.push(user.id);
+  }
+
+  sql += ' ORDER BY a.created_at DESC';
+
+  const archives = query(sql, params);
+  res.json(archives);
+});
+
+router.get('/archives/:id', authenticate, (req, res) => {
+  const { id } = req.params;
+
+  const archive = queryOne(`
+    SELECT a.*, h.house_code, h.owner_name, h.address, h.area, h.phone,
+           c.contract_no, c.status as contract_status, c.sign_date,
+           e.total_price as eval_total_price, e.version as eval_version,
+           e.base_price, e.structure_price, e.decoration_price,
+           s.total_amount as scheme_total, s.compensation_type,
+           s.money_amount, s.house_area, s.transition_fee,
+           u.name as creator_name
+    FROM archives a
+    LEFT JOIN houses h ON a.house_id = h.id
+    LEFT JOIN contracts c ON a.contract_id = c.id
+    LEFT JOIN evaluations e ON a.evaluation_id = e.id
+    LEFT JOIN schemes s ON a.scheme_id = s.id
+    LEFT JOIN users u ON a.created_by = u.id
+    WHERE a.id = ?
+  `, [id]);
+
+  if (!archive) {
+    return res.status(404).json({ error: '归档记录不存在' });
+  }
+
+  res.json(archive);
+});
+
+router.post('/:id/archives', authenticate, (req, res) => {
+  const user = req.user;
+  const { id } = req.params;
+
+  if (user.role !== 'legal' && user.role !== 'handler') {
+    return res.status(403).json({ error: '无权限创建台账归档' });
+  }
+
+  const house = queryOne('SELECT * FROM houses WHERE id = ?', [id]);
+  if (!house) {
+    return res.status(404).json({ error: '房屋不存在' });
+  }
+
+  const activeObjection = queryOne(
+    "SELECT * FROM objections WHERE house_id = ? AND status IN ('pending', 'processing')",
+    [id]
+  );
+  if (activeObjection) {
+    return res.status(400).json({ error: '异议处理中不能生成最终方案，无法归档' });
+  }
+
+  if (house.status !== 'signed') {
+    return res.status(400).json({ error: '房屋尚未完成签约，不能归档' });
+  }
+
+  const signedContract = queryOne(
+    "SELECT * FROM contracts WHERE house_id = ? AND status = 'signed' ORDER BY created_at DESC LIMIT 1",
+    [id]
+  );
+  if (!signedContract) {
+    return res.status(400).json({ error: '未找到已签约的合同' });
+  }
+
+  const confirmedEval = queryOne(
+    "SELECT * FROM evaluations WHERE house_id = ? AND status = 'confirmed' ORDER BY version DESC LIMIT 1",
+    [id]
+  );
+  if (!confirmedEval) {
+    return res.status(400).json({ error: '未找到已确认的评估结果' });
+  }
+
+  const confirmedScheme = queryOne(
+    "SELECT * FROM schemes WHERE id = ? AND status = 'confirmed'",
+    [signedContract.scheme_id]
+  );
+  if (!confirmedScheme) {
+    return res.status(400).json({ error: '未找到已确认的补偿方案' });
+  }
+
+  const existingArchive = queryOne(
+    "SELECT * FROM archives WHERE house_id = ? AND status = 'archived'",
+    [id]
+  );
+  if (existingArchive) {
+    return res.status(400).json({ error: '该房屋已存在归档记录' });
+  }
+
+  const { remark } = req.body;
+  const archiveNo = 'AR-' + Date.now();
+  const archiveId = uuidv4();
+
+  execute(
+    `INSERT INTO archives (id, house_id, contract_id, evaluation_id, scheme_id, archive_no, archive_type, status, evaluation_consistent, remark, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, 'normal', 'archived', 1, ?, ?)`,
+    [archiveId, id, signedContract.id, confirmedEval.id, confirmedScheme.id, archiveNo, remark || '', user.id]
+  );
+
+  execute("UPDATE houses SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id]);
+  execute("UPDATE contracts SET status = 'archived' WHERE id = ?", [signedContract.id]);
+
+  audit(user.id, user.role, 'archive_create', null, JSON.stringify({ id: archiveId, archiveNo }), id);
+
+  const archive = queryOne(`
+    SELECT a.*, h.house_code, h.owner_name
+    FROM archives a
+    LEFT JOIN houses h ON a.house_id = h.id
+    WHERE a.id = ?
+  `, [archiveId]);
+
+  res.status(201).json(archive);
+});
+
+router.post('/archives/batch', authenticate, (req, res) => {
+  const user = req.user;
+  const { house_ids, remark } = req.body;
+
+  if (user.role !== 'legal' && user.role !== 'handler') {
+    return res.status(403).json({ error: '无权限批量归档' });
+  }
+
+  if (!house_ids || !Array.isArray(house_ids) || house_ids.length === 0) {
+    return res.status(400).json({ error: '请选择要归档的房屋' });
+  }
+
+  const results = { success: [], failed: [] };
+  const batchNo = 'BATCH-' + Date.now();
+
+  for (const houseId of house_ids) {
+    try {
+      const house = queryOne('SELECT * FROM houses WHERE id = ?', [houseId]);
+      if (!house) {
+        results.failed.push({ house_id: houseId, error: '房屋不存在' });
+        continue;
+      }
+
+      const activeObjection = queryOne(
+        "SELECT * FROM objections WHERE house_id = ? AND status IN ('pending', 'processing')",
+        [houseId]
+      );
+      if (activeObjection) {
+        results.failed.push({ house_id: houseId, house_code: house.house_code, error: '异议处理中不能生成最终方案，无法归档' });
+        continue;
+      }
+
+      if (house.status !== 'signed') {
+        results.failed.push({ house_id: houseId, house_code: house.house_code, error: '房屋尚未完成签约' });
+        continue;
+      }
+
+      const existingArchive = queryOne(
+        "SELECT * FROM archives WHERE house_id = ? AND status = 'archived'",
+        [houseId]
+      );
+      if (existingArchive) {
+        results.failed.push({ house_id: houseId, house_code: house.house_code, error: '已存在归档记录' });
+        continue;
+      }
+
+      const signedContract = queryOne(
+        "SELECT * FROM contracts WHERE house_id = ? AND status = 'signed' ORDER BY created_at DESC LIMIT 1",
+        [houseId]
+      );
+      const confirmedEval = queryOne(
+        "SELECT * FROM evaluations WHERE house_id = ? AND status = 'confirmed' ORDER BY version DESC LIMIT 1",
+        [houseId]
+      );
+
+      const archiveId = uuidv4();
+      const archiveNo = 'AR-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+
+      execute(
+        `INSERT INTO archives (id, house_id, contract_id, evaluation_id, scheme_id, archive_no, archive_type, status, evaluation_consistent, remark, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, 'batch', 'archived', 1, ?, ?)`,
+        [archiveId, houseId, signedContract.id, confirmedEval.id, signedContract.scheme_id, archiveNo, remark || '', user.id]
+      );
+
+      execute("UPDATE houses SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [houseId]);
+      execute("UPDATE contracts SET status = 'archived' WHERE id = ?", [signedContract.id]);
+
+      audit(user.id, user.role, 'archive_batch_create', null, JSON.stringify({ id: archiveId, archiveNo, batchNo }), houseId);
+      results.success.push({ house_id: houseId, house_code: house.house_code, archive_no: archiveNo });
+    } catch (e) {
+      results.failed.push({ house_id: houseId, error: e.message });
+    }
+  }
+
+  res.json({ batch_no: batchNo, results });
+});
+
+router.get('/archives-consistency-check', authenticate, (req, res) => {
+  const user = req.user;
+  const { status = 'signed' } = req.query;
+
+  let housesSql = `
+    SELECT h.*,
+           (SELECT COUNT(*) FROM objections o WHERE o.house_id = h.id AND o.status IN ('pending', 'processing')) as active_objections,
+           (SELECT COUNT(*) FROM evaluations e WHERE e.house_id = h.id AND e.status = 'confirmed') as confirmed_eval_count
+    FROM houses h
+    WHERE h.status = ?
+  `;
+  const params = [status];
+
+  if (user.role === 'resident') {
+    housesSql += ' AND h.created_by = ?';
+    params.push(user.id);
+  }
+
+  const houses = query(housesSql, params);
+
+  const results = houses.map(h => {
+    const evaluations = query(
+      "SELECT * FROM evaluations WHERE house_id = ? ORDER BY version DESC",
+      [h.id]
+    );
+
+    let evaluation_consistent = true;
+    if (evaluations.length > 1) {
+      const latestEval = evaluations[0];
+      const prevEval = evaluations[1];
+      evaluation_consistent = latestEval.total_price === prevEval.total_price &&
+                               latestEval.base_price === prevEval.base_price;
+    }
+
+    return {
+      house_id: h.id,
+      house_code: h.house_code,
+      owner_name: h.owner_name,
+      status: h.status,
+      active_objections: h.active_objections,
+      confirmed_eval_count: h.confirmed_eval_count,
+      evaluation_consistent: evaluation_consistent,
+      can_archive: h.active_objections === 0 && h.confirmed_eval_count > 0 && h.status === 'signed',
+      archive_block_reason: h.active_objections > 0 ? '异议处理中不能生成最终方案' :
+                           h.confirmed_eval_count === 0 ? '未找到已确认的评估结果' : null
+    };
+  });
+
+  res.json(results);
+});
+
 module.exports = router;

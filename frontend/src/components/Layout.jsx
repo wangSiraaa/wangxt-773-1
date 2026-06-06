@@ -19,7 +19,8 @@ export default function Layout() {
 
   const navItems = [
     { path: '/dashboard', label: '进度看板', icon: '📊' },
-    { path: '/houses', label: '房屋管理', icon: '🏠' }
+    { path: '/houses', label: '房屋管理', icon: '🏠' },
+    { path: '/archives', label: '台账归档', icon: '📁' }
   ];
 
   return (

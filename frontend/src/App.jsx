@@ -5,6 +5,7 @@ import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import HouseList from './pages/HouseList';
 import HouseDetail from './pages/HouseDetail';
+import ArchiveList from './pages/ArchiveList';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -26,6 +27,7 @@ function App() {
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="houses" element={<HouseList />} />
         <Route path="houses/:id" element={<HouseDetail />} />
+        <Route path="archives" element={<ArchiveList />} />
       </Route>
     </Routes>
   );

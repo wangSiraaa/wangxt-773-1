@@ -214,6 +214,29 @@ async function initDatabase() {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS archives (
+      id TEXT PRIMARY KEY,
+      house_id TEXT NOT NULL,
+      contract_id TEXT NOT NULL,
+      evaluation_id TEXT NOT NULL,
+      scheme_id TEXT NOT NULL,
+      archive_no TEXT UNIQUE NOT NULL,
+      archive_type TEXT NOT NULL DEFAULT 'normal' CHECK (archive_type IN ('normal', 'batch')),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'archived', 'cancelled')),
+      evaluation_consistent INTEGER DEFAULT 1,
+      remark TEXT,
+      archived_at DATETIME,
+      created_by TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (house_id) REFERENCES houses(id),
+      FOREIGN KEY (contract_id) REFERENCES contracts(id),
+      FOREIGN KEY (evaluation_id) REFERENCES evaluations(id),
+      FOREIGN KEY (scheme_id) REFERENCES schemes(id),
+      FOREIGN KEY (created_by) REFERENCES users(id)
+    )
+  `);
+
   const userCount = queryOne('SELECT COUNT(*) as count FROM users');
   if (!userCount || userCount.count === 0) {
     const salt = bcrypt.genSaltSync(10);

@@ -60,7 +60,13 @@ export const houseAPI = {
   signContract: (contractId) => api.post(`/houses/contracts/${contractId}/sign`),
   freezeContract: (contractId) => api.post(`/houses/contracts/${contractId}/freeze`),
   
-  getAuditLogs: (houseId) => api.get(`/houses/${houseId}/audit-logs`)
+  getAuditLogs: (houseId) => api.get(`/houses/${houseId}/audit-logs`),
+  
+  createArchive: (houseId, data) => api.post(`/houses/${houseId}/archives`, data),
+  getArchives: (params) => api.get('/houses/archives/list', { params }),
+  getArchiveById: (id) => api.get(`/houses/archives/${id}`),
+  batchArchive: (data) => api.post('/houses/archives/batch', data),
+  getArchivesConsistency: (params) => api.get('/houses/archives-consistency-check', { params })
 };
 
 export const dashboardAPI = {
